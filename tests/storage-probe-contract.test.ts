@@ -1124,9 +1124,9 @@ test("legacy HOT_RETENTION fixture controls remain isolated from the primary sta
   assert.match(race, /create_observation_fixture "\$run"/);
   assert.match(race, /sampled_at-interval '2 minutes'/);
   assert.match(race, /sampled_at-interval '1 minute'/);
-  assert.match(race, /BEFORE UPDATE OF archivegenerationid/);
+  assert.match(race, /BEFORE UPDATE OF archivegenerationid ON obs FOR EACH ROW/);
+  assert.match(race, /WHEN \(OLD\.id = \$cold_id\)/);
   assert.match(race, /pg_advisory_xact_lock/);
-  assert.match(race, /pg_temp\.oscar_archive_activation_row WHERE observation_id=\$cold_id/);
   assert.match(race, /resulttime=resulttime\+interval '1 microsecond'/);
   assert.match(race, /fixture_archive_time_sql "\$retention" 'clock_timestamp\(\)'/);
   assert.match(race, /j\.state='FAILED'/);

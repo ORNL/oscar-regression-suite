@@ -3530,16 +3530,12 @@ EOF
     cold_id=$(scalar "SELECT cold_id FROM oscar_regression_fixture WHERE run_id='$run';")
     [[ $cold_id =~ ^[1-9][0-9]{0,18}$ ]] || fail 'Could not identify the activation-race cold row.'
     psql_admin --command "CREATE FUNCTION $function_name() RETURNS trigger LANGUAGE plpgsql AS \$\$
-      DECLARE should_block boolean := false;
       BEGIN
-        IF to_regclass('pg_temp.oscar_archive_activation_row') IS NOT NULL THEN
-          EXECUTE 'SELECT EXISTS (SELECT 1 FROM pg_temp.oscar_archive_activation_row WHERE observation_id=$cold_id)'
-            INTO should_block;
-        END IF;
-        IF should_block THEN PERFORM pg_advisory_xact_lock($lock_class,$lock_object); END IF;
-        RETURN NULL;
+        PERFORM pg_advisory_xact_lock($lock_class,$lock_object);
+        RETURN NEW;
       END \$\$;
-      CREATE TRIGGER $trigger_name BEFORE UPDATE OF archivegenerationid ON obs FOR EACH STATEMENT
+      CREATE TRIGGER $trigger_name BEFORE UPDATE OF archivegenerationid ON obs FOR EACH ROW
+        WHEN (OLD.id = $cold_id)
         EXECUTE FUNCTION $function_name();" >/dev/null
     fixture_cold_time=$(fixture_archive_time_sql "$retention" 'clock_timestamp()')
     chilled=$(scalar "WITH boundary AS (

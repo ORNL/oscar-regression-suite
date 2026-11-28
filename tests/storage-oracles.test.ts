@@ -421,6 +421,32 @@ test("platform/metric contracts preserve PostgreSQL, archive, and batch counters
     {...upgraded3121, archiveMarker: {...platform.archiveMarker, version: "3.10.0", exact: true}},
     "3.12.1",
   ), false, "pre-3.11 storage-profile marker must remain rejected on 3.12.x");
+  const clean400 = {
+    ...upgraded3121,
+    expectedRelease: "4.0.0",
+    configuredRelease: "4.0.0",
+    templateRelease: "4.0.0",
+    appImage: {...platform.appImage, reference: "oscar:4.0.0", versionLabel: "4.0.0"},
+    postgisImage: {
+      ...platform.postgisImage,
+      reference: "oscar-postgis:4.0.0",
+      versionLabel: "4.0.0",
+      storageProfileLabel: "4.0.0",
+    },
+    gatewayImage: {
+      ...platform.gatewayImage,
+      reference: "nginx/nginx-unprivileged:1.30.8-alpine",
+      versionLabel: "1.30.8-alpine",
+    },
+  };
+  assert.equal(storagePlatformHasExactReleaseIdentity(
+    {...clean400, archiveMarker: {...platform.archiveMarker, version: "4.0.0", exact: true}},
+    "4.0.0",
+  ), true, "clean 4.0.0 deployment must pass exact identity validation");
+  assert.equal(storagePlatformHasExactReleaseIdentity(
+    {...clean400, archiveMarker: {...platform.archiveMarker, version: "3.12.2", exact: true}},
+    "4.0.0",
+  ), false, "pre-4.0 archive marker must be rejected on 4.0.0 clean-break foundation");
   assert.equal(storagePlatformHasExactReleaseIdentity(
     {...platform, storageRoots: {...platform.storageRoots,
       backup: {...platform.storageRoots.backup!, rootKind: "archive"}}},

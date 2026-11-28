@@ -337,8 +337,8 @@ export function loadConfig(args = process.argv.slice(2)): SuiteConfig {
   }
   const storageWorkflow = capabilityMode("STORAGE_WORKFLOW", "required");
   const storageExpectedReleaseRaw = process.env.STORAGE_EXPECTED_RELEASE?.trim() || "3.11.0";
-  if (!/^3\.(?:11|12)\.\d+$/.test(storageExpectedReleaseRaw)) {
-    throw new Error("STORAGE_EXPECTED_RELEASE must match 3.11.<patch> or 3.12.<patch> (for example 3.11.15 or 3.12.0)");
+  if (!/^(?:3\.(?:11|12)|4\.\d+)\.\d+$/.test(storageExpectedReleaseRaw)) {
+    throw new Error("STORAGE_EXPECTED_RELEASE must match 3.11.<patch>, 3.12.<patch>, or 4.<minor>.<patch> (for example 3.11.15, 3.12.2, or 4.0.0)");
   }
   const storageExpectedRelease = storageExpectedReleaseRaw as StorageExpectedRelease;
   const storageBackupWorkflow = capabilityMode("STORAGE_BACKUP_WORKFLOW", "auto");

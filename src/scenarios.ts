@@ -318,10 +318,14 @@ export const PARQUET_PRIMARY_OUTPUT_NAMES_3_12 = [
 
 const PARQUET_PRIMARY_OUTPUT_NAMES = PARQUET_PRIMARY_OUTPUT_NAMES_3_12;
 
+function isReleaseAtLeast312(release: StorageExpectedRelease): boolean {
+  return release.startsWith("3.12.") || /^4\.\d+\.\d+$/.test(release);
+}
+
 export function expectedParquetPrimaryOutputNames(
   release: StorageExpectedRelease,
 ): readonly string[] {
-  return release.startsWith("3.12.")
+  return isReleaseAtLeast312(release)
     ? PARQUET_PRIMARY_OUTPUT_NAMES_3_12
     : PARQUET_PRIMARY_OUTPUT_NAMES_3_11;
 }
@@ -334,7 +338,7 @@ export function parquetPrimaryOutputNamesMatchRelease(
   const actualJson = JSON.stringify(actual);
   const v311Json = JSON.stringify(PARQUET_PRIMARY_OUTPUT_NAMES_3_11);
   const v312Json = JSON.stringify(PARQUET_PRIMARY_OUTPUT_NAMES_3_12);
-  if (release.startsWith("3.12.")) {
+  if (isReleaseAtLeast312(release)) {
     return actualJson === v312Json &&
       (packagedDefaults === undefined || JSON.stringify(packagedDefaults) === v312Json);
   }
@@ -990,7 +994,7 @@ export class RegressionScenarios {
         });
       }
 
-      const requireCustomDashboards = this.config.storageExpectedRelease.startsWith("3.12.");
+      const requireCustomDashboards = isReleaseAtLeast312(this.config.storageExpectedRelease);
       const hasCustomDashboardsNav = (await page.getByTestId("nav-item-custom-dashboards").count()) > 0;
       if (requireCustomDashboards || hasCustomDashboardsNav) {
         await this.check({
@@ -2562,7 +2566,7 @@ export class RegressionScenarios {
         };
       });
 
-      const requireMobileDetector = this.config.storageExpectedRelease.startsWith("3.12.");
+      const requireMobileDetector = isReleaseAtLeast312(this.config.storageExpectedRelease);
       const inspectMobileDetectorProvider = async (): Promise<{
         found: boolean;
         windowOpened: boolean;

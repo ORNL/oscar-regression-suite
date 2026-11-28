@@ -639,11 +639,33 @@ test("configuration supports STORAGE_EXPECTED_RELEASE=3.12.0 and enforces 26-str
     );
   });
 
-  for (const invalid of ["3.10.0", "3.13.0", "3.12"]) {
+  for (const invalid of ["3.10.0", "3.13.0", "3.12", "4.0"]) {
     withEnvironment({...baseEnvironment, STORAGE_EXPECTED_RELEASE: invalid}, () => {
       assert.throws(() => loadConfig([]), /STORAGE_EXPECTED_RELEASE must match/);
     });
   }
+
+  withEnvironment({...baseEnvironment, STORAGE_EXPECTED_RELEASE: "4.0.0"}, () => {
+    const cfg = loadConfig(["--profile", "smoke"]);
+    assert.equal(cfg.storageExpectedRelease, "4.0.0");
+    assert.equal(expectedParquetPrimaryOutputNames(cfg.storageExpectedRelease).length, 26);
+    assert.equal(
+      parquetPrimaryOutputNamesMatchRelease(
+        PARQUET_PRIMARY_OUTPUT_NAMES_3_12,
+        cfg.storageExpectedRelease,
+        PARQUET_PRIMARY_OUTPUT_NAMES_3_12,
+      ),
+      true,
+    );
+    assert.equal(
+      parquetPrimaryOutputNamesMatchRelease(
+        PARQUET_PRIMARY_OUTPUT_NAMES_3_11,
+        cfg.storageExpectedRelease,
+        PARQUET_PRIMARY_OUTPUT_NAMES_3_11,
+      ),
+      false,
+    );
+  });
 });
 
 test("configuration validates FEDERATION_WORKFLOW, peer URL constraints, credential fallback, and secret redaction", () => {

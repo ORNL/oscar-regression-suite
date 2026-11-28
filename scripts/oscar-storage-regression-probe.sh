@@ -1713,7 +1713,7 @@ case $action in
   platform)
     expected_release=3.11.0
     configured_release=$(env_value OSCAR_VERSION missing)
-    if [[ $configured_release =~ ^3\.(11|12)\.[0-9]+(-[A-Za-z0-9._-]+)?$ ]]; then
+    if [[ $configured_release =~ ^(3\.(11|12)|4\.[0-9]+)\.[0-9]+(-[A-Za-z0-9._-]+)?$ ]]; then
       expected_release="$configured_release"
     fi
     template_release=$(awk -F= '$1 == "OSCAR_VERSION" { print substr($0, index($0, "=") + 1); exit }' .env.example)
@@ -2117,8 +2117,8 @@ case $action in
     checksums=$(scalar "SHOW data_checksums;")
     installed=$(scalar "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname='pg_stat_statements');")
     preloaded=$(scalar "SELECT position('pg_stat_statements' in current_setting('shared_preload_libraries'))>0;")
-    marker_text=$(compose exec -T postgres sh -c 'marker=/var/lib/postgresql/data/.oscar-data-checksum-init; test -f "$marker" && test ! -L "$marker" && cat "$marker"' 2>/dev/null || true)
-    marker_lines=$(compose exec -T postgres sh -c 'marker=/var/lib/postgresql/data/.oscar-data-checksum-init; test -f "$marker" && test ! -L "$marker" && awk "END {print NR}" "$marker"' 2>/dev/null || true)
+    marker_text=$(compose exec -T postgres sh -c 'marker="${PGDATA:-/var/lib/postgresql/data}/.oscar-data-checksum-init"; test -f "$marker" && test ! -L "$marker" && cat "$marker"' 2>/dev/null || true)
+    marker_lines=$(compose exec -T postgres sh -c 'marker="${PGDATA:-/var/lib/postgresql/data}/.oscar-data-checksum-init"; test -f "$marker" && test ! -L "$marker" && awk "END {print NR}" "$marker"' 2>/dev/null || true)
     marker_present=false; marker_exact=false; marker_format=''; marker_version=''; marker_checksums=''; marker_initialized=''
     if [[ -n $marker_text ]]; then
       marker_present=true
@@ -2129,7 +2129,8 @@ case $action in
       if [[ $marker_lines == 4 && $marker_format == oscar-storage-profile &&
             ( $marker_version == "$expected_release" ||
               ( $expected_release =~ ^3\.11\.[0-9]+$ && $marker_version =~ ^3\.11\.[0-9]+$ ) ||
-              ( $expected_release =~ ^3\.12\.[0-9]+$ && $marker_version =~ ^3\.(11|12)\.[0-9]+$ ) ) &&
+              ( $expected_release =~ ^3\.12\.[0-9]+$ && $marker_version =~ ^3\.(11|12)\.[0-9]+$ ) ||
+              ( $expected_release =~ ^4\.[0-9]+\.[0-9]+$ && $marker_version =~ ^4\.[0-9]+\.[0-9]+$ ) ) &&
             $marker_checksums == on &&
             $marker_initialized =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
         marker_exact=true
@@ -2299,6 +2300,7 @@ case $action in
     cleanup_disabled_backup_check() { rm -rf -- "$work"; }
     trap cleanup_disabled_backup_check EXIT
     expected_message='OSCAR backups are disabled. Re-run upgrade with --backup-mode single --backup-dir <safe-absolute-backup-path> before using backup, verification, pruning, or restore.'
+    configured_release=$(env_value OSCAR_VERSION missing)
     commands_rejected=true
     index=0
     while IFS= read -r command; do
@@ -2309,7 +2311,11 @@ case $action in
       set -e
       plain_message_count=$(grep -Fxc "$expected_message" "$log" || true)
       launcher_message_count=$(grep -Fxc "ERROR: $expected_message" "$log" || true)
-      if [[ $status -eq 0 || $((plain_message_count + launcher_message_count)) -ne 1 ]]; then
+      if [[ $command == 'bash oscar.sh backup-prune' && $configured_release =~ ^4\. ]]; then
+        if [[ $status -eq 0 ]] || ! { [[ $((plain_message_count + launcher_message_count)) -eq 1 ]] || grep -Eiq 'unknown command|usage:' "$log"; }; then
+          commands_rejected=false
+        fi
+      elif [[ $status -eq 0 || $((plain_message_count + launcher_message_count)) -ne 1 ]]; then
         commands_rejected=false
       fi
     done <<'COMMANDS'
@@ -4429,9 +4435,11 @@ SQL
     sudo bash oscar.sh backup-prune >"$prune_log" 2>&1
     prune_status=$?
     set -e
+    configured_release=$(env_value OSCAR_VERSION missing)
     prune_retired=false
     if [[ $prune_status -ne 0 ]] &&
-       grep -Fq 'OSCAR backup-prune is retired. Create a new verified single snapshot to atomically replace CURRENT' "$prune_log" &&
+       { grep -Fq 'OSCAR backup-prune is retired. Create a new verified single snapshot to atomically replace CURRENT' "$prune_log" ||
+         { [[ $configured_release =~ ^4\. ]] && grep -Eiq 'unknown command|usage:' "$prune_log"; }; } &&
        [[ $(tree_fingerprint "$backup_dir") == "$before_prune" ]]; then
       prune_retired=true
     fi
@@ -4450,9 +4458,9 @@ SQL
     [[ $run =~ ^[A-Za-z0-9_]{1,96}$ ]] || fail 'Restore-drill run ID must be SQL-identifier safe.'
     [[ $confirmation == "$run:DESTRUCTIVE-RESTORE" ]] ||
       fail 'Restore drill is destructive and requires the exact per-run confirmation token.'
-    [[ $(env_value OSCAR_VERSION missing) =~ ^3\.(11|12)\.[0-9]+(-[A-Za-z0-9._-]+)?$ &&
+    [[ $(env_value OSCAR_VERSION missing) =~ ^(3\.(11|12)|4\.[0-9]+)\.[0-9]+(-[A-Za-z0-9._-]+)?$ &&
        $(env_value OSCAR_BACKUP_MODE disabled) == single ]] ||
-      fail 'Restore drill requires OSCAR 3.11.x or 3.12.x with OSCAR_BACKUP_MODE=single.'
+      fail 'Restore drill requires OSCAR 3.11.x, 3.12.x, or 4.x with OSCAR_BACKUP_MODE=single.'
     for expected in "$expected_archive" "$expected_backup"; do
       [[ $expected == /* && $expected != / && $expected =~ ^/[A-Za-z0-9._/-]+$ ]] ||
         fail 'Restore drill requires two canonical acknowledged storage paths.'
@@ -4541,7 +4549,7 @@ SQL
        $restored_timeline -gt $source_timeline ]] && fresh_timeline=true
     recovery_settings_cleared=false
     if [[ $(scalar 'SELECT NOT pg_is_in_recovery();') == t ]] &&
-       compose exec -T postgres sh -c 'test ! -e /var/lib/postgresql/data/recovery.signal && test ! -e /var/lib/postgresql/data/standby.signal'; then
+       compose exec -T postgres sh -c 'test ! -e "${PGDATA:-/var/lib/postgresql/data}/recovery.signal" && test ! -e "${PGDATA:-/var/lib/postgresql/data}/standby.signal"'; then
       recovery_settings_cleared=true
     fi
     psql_admin --command "INSERT INTO oscar_restore_regression_$run VALUES (2,'$durable'); CHECKPOINT;" >/dev/null

@@ -100,6 +100,7 @@ import {
   assessArchiveScratchRestart,
   assessArchiveScratch,
   assessCompactionHealth,
+  assessFoundation40Health,
   assessImmutableStageHealth,
   assessJpeg,
   assessMediaMetadataHealth,
@@ -108,13 +109,16 @@ import {
   assessStoragePlatform,
   compactionHealthIsSafe,
   encodeOshBigId,
+  foundation40HealthIsSafe,
   immutableStageHealthIsSafe,
+  isOsc40PlusRelease,
   MAX_RETAINED_FRAME_BYTES,
   mediaMetadataHealthIsSafe,
   OSCAR_STORAGE_SCHEMA_CHECKSUM,
   OSCAR_STORAGE_SCHEMA_VERSION,
   parseCollectionIds,
   retentionRuntimeReady,
+  sandboxRuntimeLayoutIsSafe40Plus,
   storagePlatformHasExactReleaseIdentity,
   storageMetricFromProbe,
 } from "./storage-oracles.js";
@@ -2517,6 +2521,123 @@ export class RegressionScenarios {
               {data: {}},
             ).then((r) => r.dispose()).catch(() => undefined);
           }
+        }
+      });
+
+      await this.check({
+        scenario: "map-national-servers",
+        category: "system-update",
+        action: "verify OSCAR 4.0+ System Update Release Channel opt-in (Production Stable default vs. Dev Pre-release), CLI hint, and >= 4.0.0 floor refusal",
+        target: "/users?tab=update and /sensorhub/oscar/system-update/*",
+        expected: "default releaseChannel is stable, invalid channel and pre-4.0 targetVersion (3.12.2) return HTTP 400, UI toggles cleanly to dev (showing amber opt-in notice and --channel dev CLI hint) and back to stable",
+      }, async () => {
+        const statusRes = await page.context().request.get(
+          this.viewerUrl("/sensorhub/oscar/system-update/status"),
+          {headers: {Accept: "application/json"}},
+        );
+        const statusOk = statusRes.ok();
+        const statusJson = statusOk
+          ? (await statusRes.json().catch(() => ({}))) as {releaseChannel?: string; currentVersion?: string}
+          : {};
+        await statusRes.dispose();
+
+        const expect40Plus = isOsc40PlusRelease(this.config.storageExpectedRelease);
+        const initialChannel = statusJson.releaseChannel;
+        if (!expect40Plus && typeof initialChannel !== "string") {
+          return {
+            passed: true,
+            observed: `pre-4.0 release (${this.config.storageExpectedRelease}) does not expose releaseChannel; check not applicable`,
+          };
+        }
+        const restoreChannel = initialChannel === "dev" ? "dev" : "stable";
+        const csrfHeaders = {
+          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/json",
+        };
+        try {
+          const invalidChannelRes = await page.context().request.post(
+            this.viewerUrl("/sensorhub/oscar/system-update/channel"),
+            {headers: csrfHeaders, data: {channel: "invalid-channel"}},
+          );
+          const invalidChannelStatus = invalidChannelRes.status();
+          await invalidChannelRes.dispose();
+
+          const pre40FloorRes = await page.context().request.post(
+            this.viewerUrl("/sensorhub/oscar/system-update/apply"),
+            {headers: csrfHeaders, data: {targetVersion: "3.12.2"}},
+          );
+          const pre40FloorStatus = pre40FloorRes.status();
+          const pre40FloorBody = await pre40FloorRes.text().catch(() => "");
+          await pre40FloorRes.dispose();
+
+          await this.goto(page, "/users?tab=update");
+          const channelGroup = page.getByTestId("system-update-channel-group");
+          await channelGroup.waitFor({state: "visible", timeout: this.config.uiTimeoutMs});
+          const stableBtn = page.getByTestId("system-update-channel-stable");
+          const devBtn = page.getByTestId("system-update-channel-dev");
+
+          const initialStablePressed = (await stableBtn.getAttribute("aria-pressed")) === "true";
+          const initialNoticeHidden = (await page.getByTestId("system-update-dev-channel-notice").count()) === 0;
+
+          const switchDevPromise = page.waitForResponse(
+            (res) => res.request().method() === "POST" && res.url().includes("/sensorhub/oscar/system-update/channel"),
+            {timeout: 15_000},
+          );
+          await devBtn.click();
+          const switchDevRes = await switchDevPromise;
+          const switchDevOk = switchDevRes.ok();
+          const switchDevJson = switchDevOk
+            ? (await switchDevRes.json().catch(() => ({}))) as {releaseChannel?: string; linuxCheckCommand?: string}
+            : {};
+
+          const devNoticeVisible = await page.getByTestId("system-update-dev-channel-notice")
+            .waitFor({state: "visible", timeout: 10_000})
+            .then(() => true, () => false);
+          const devBody = await page.locator("body").innerText();
+          const devCliHintVisible = devBody.includes("--channel dev");
+
+          const switchStablePromise = page.waitForResponse(
+            (res) => res.request().method() === "POST" && res.url().includes("/sensorhub/oscar/system-update/channel"),
+            {timeout: 15_000},
+          );
+          await stableBtn.click();
+          const switchStableRes = await switchStablePromise;
+          const switchStableOk = switchStableRes.ok();
+          const switchStableJson = switchStableOk
+            ? (await switchStableRes.json().catch(() => ({}))) as {releaseChannel?: string}
+            : {};
+          const restoredNoticeHidden = await page.getByTestId("system-update-dev-channel-notice")
+            .waitFor({state: "hidden", timeout: 10_000})
+            .then(() => true, () => false);
+
+          const passed = statusOk &&
+            initialChannel === "stable" &&
+            invalidChannelStatus === 400 &&
+            pre40FloorStatus === 400 &&
+            /4\.0\.0/i.test(pre40FloorBody) &&
+            initialStablePressed &&
+            initialNoticeHidden &&
+            switchDevOk &&
+            switchDevJson.releaseChannel === "dev" &&
+            devNoticeVisible &&
+            devCliHintVisible &&
+            switchStableOk &&
+            switchStableJson.releaseChannel === "stable" &&
+            restoredNoticeHidden;
+          return {
+            passed,
+            observed: `initialChannel=${String(initialChannel)}; invalidChannelStatus=${invalidChannelStatus}; ` +
+              `pre40FloorStatus=${pre40FloorStatus}; initialStable=${initialStablePressed}; ` +
+              `devChannel=${String(switchDevJson.releaseChannel)}; devNotice=${devNoticeVisible}; ` +
+              `devCliHint=${devCliHintVisible}; restoredChannel=${String(switchStableJson.releaseChannel)}; ` +
+              `restoredNoticeHidden=${restoredNoticeHidden}`,
+            evidence: passed ? "" : await this.screenshotOnFailure(page, "system-update-release-channel-failed"),
+          };
+        } finally {
+          await page.context().request.post(
+            this.viewerUrl("/sensorhub/oscar/system-update/channel"),
+            {headers: csrfHeaders, data: {channel: restoreChannel}},
+          ).then((r) => r.dispose()).catch(() => undefined);
         }
       });
     } finally { await page.close(); }
@@ -9435,6 +9556,18 @@ export class RegressionScenarios {
         return {passed: compactionHealthIsSafe(value), observed: JSON.stringify(value)};
       });
 
+      if (isOsc40PlusRelease(this.config.storageExpectedRelease)) {
+        await this.check({
+          scenario: "storage-health", category: "foundation-40",
+          action: "verify OSCAR 4.0+ native PG 19 versioned PGDATA, zero anonymous volumes, WGS-84 spatial catalog with zero spatial SQL indexes, zero obs_latest temp spill, and unbuffered MQTT gateway hardening",
+          target: this.config.targetHost,
+          expected: "PG >= 19 with PGDATA=/var/lib/postgresql/<major>/docker, 0 anonymous volumes, named volume on /var/lib/postgresql without tmpfs mask, /dev/shm >= 256 MiB, 7 nullable double-precision WGS-84 columns with 0 spatial SQL indexes, obsLatestTempBlksWritten=0, gateway keepalive >= 128, and unbuffered /sensorhub/mqtt WebSocket location",
+        }, async () => {
+          const value = assessFoundation40Health(await probe.runJson("foundation-40-health"));
+          return {passed: foundation40HealthIsSafe(value), observed: JSON.stringify(value)};
+        });
+      }
+
       await this.check({
         scenario: "storage-health", category: "cold-archive", action: "verify bounded DuckDB scratch hygiene",
         target: REGRESSION_ARCHIVE_RESOURCES.temporaryDirectory,
@@ -11471,6 +11604,22 @@ export class RegressionScenarios {
         };
       });
 
+      if (isOsc40PlusRelease(this.config.storageExpectedRelease)) {
+        await this.check({
+          scenario: "training-sandbox",
+          category: "sandbox-pg19-layout",
+          action: "verify OSCAR 4.0+ Training Sandbox PostgreSQL 19 versioned PGDATA and zero anonymous Docker volumes",
+          target: "oscar-sandbox-postgres",
+          expected: "sandbox postgres runs PG >= 19 with PGDATA=/var/lib/postgresql/<major>/docker, named sandbox_pg on /var/lib/postgresql, zero anonymous volumes, and no /var/lib/postgresql tmpfs mask",
+        }, async () => {
+          const layout = await probe.sandboxRuntimeLayout();
+          return {
+            passed: sandboxRuntimeLayoutIsSafe40Plus(layout),
+            observed: JSON.stringify(layout),
+          };
+        });
+      }
+
       const sbCtx = await browserInstance.newContext({
         viewport: {width: 1920, height: 1080},
         ignoreHTTPSErrors: true,
@@ -11619,6 +11768,56 @@ export class RegressionScenarios {
             evidence,
           };
         });
+
+        if (isOsc40PlusRelease(this.config.storageExpectedRelease)) {
+          await this.check({
+            scenario: "training-sandbox",
+            category: "guided-academy-22-labs",
+            action: "verify holistic 22-lab (8/5/9) Guided Academy UX: role scope, native progress bar, Key Terms accordion, Common Pitfalls, and Lab 3.9 Release Channels",
+            target: `${sandboxBaseUrl}/`,
+            expected: "tracks expose 8 Operator + 5 Supervisor + 9 Administrator labs, role scope + native <progress> + pitfalls + expandable Key Terms <dl> render cleanly, and Lab 3.9 covers Release Channels and 4.0.0+ upgrades",
+          }, async () => {
+            await sbPage.getByTestId("training-track-btn-operator").click();
+            const opCount = await sbPage.locator('[data-testid^="training-lab-chip-"]').count();
+            const roleScopeVisible = await sbPage.getByTestId("training-track-role-scope").isVisible();
+            const nativeProgressVisible = (await sbPage.locator('[data-testid="training-track-progress"] progress').count()) >= 1;
+            const pitfallsVisible = await sbPage.getByTestId("training-coach-pitfalls").isVisible();
+
+            const keyTermsDetails = sbPage.getByTestId("training-coach-key-terms");
+            const keyTermsVisible = await keyTermsDetails.isVisible();
+            if (keyTermsVisible && !(await keyTermsDetails.evaluate((el) => (el as HTMLDetailsElement).open))) {
+              await keyTermsDetails.locator("summary").click();
+            }
+            const keyTermsDtCount = await keyTermsDetails.locator("dl dt").count();
+
+            await sbPage.getByTestId("training-track-btn-supervisor").click();
+            const supCount = await sbPage.locator('[data-testid^="training-lab-chip-"]').count();
+
+            await sbPage.getByTestId("training-track-btn-administrator").click();
+            const admCount = await sbPage.locator('[data-testid^="training-lab-chip-"]').count();
+
+            await sbPage.getByTestId("training-lab-chip-adm-lifecycle").click();
+            const dockText = await sbPage.getByTestId("training-coach-dock").innerText();
+            const lifecycleCoversChannels = /Release Channel/i.test(dockText) && /4\.0\.0/i.test(dockText);
+
+            const passed =
+              opCount === 8 &&
+              supCount === 5 &&
+              admCount === 9 &&
+              roleScopeVisible &&
+              nativeProgressVisible &&
+              pitfallsVisible &&
+              keyTermsVisible &&
+              keyTermsDtCount >= 2 &&
+              lifecycleCoversChannels;
+            const evidence = passed ? "" : await this.screenshotOnFailure(sbPage, "training-sandbox-22-labs-failed");
+            return {
+              passed,
+              observed: `labCounts=${opCount}/${supCount}/${admCount}; roleScope=${roleScopeVisible}; progress=${nativeProgressVisible}; pitfalls=${pitfallsVisible}; keyTermsDt=${keyTermsDtCount}; lifecycleChannels=${lifecycleCoversChannels}`,
+              evidence,
+            };
+          });
+        }
       } finally {
         await sbCtx.close().catch(() => {});
       }

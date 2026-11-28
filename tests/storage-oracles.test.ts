@@ -8,6 +8,7 @@ import {
   assessArchiveScratchRestart,
   assessArchiveScratch,
   assessCompactionHealth,
+  assessFoundation40Health,
   assessImmutableStageHealth,
   assessDailyFilePublication,
   assessJpeg,
@@ -17,11 +18,14 @@ import {
   assessStoragePlatform,
   compactionHealthIsSafe,
   encodeOshBigId,
+  foundation40HealthIsSafe,
   immutableStageHealthIsSafe,
+  isOsc40PlusRelease,
   mediaMetadataHealthIsSafe,
   OSCAR_STORAGE_SCHEMA_CHECKSUM,
   parseBaselineJpeg,
   retentionRuntimeReady,
+  sandboxRuntimeLayoutIsSafe40Plus,
   storagePlatformHasExactReleaseIdentity,
   storageMetricFromProbe,
 } from "../src/storage-oracles.js";
@@ -675,4 +679,53 @@ test("compaction health enforces split-at-export separation, summary population,
   assert.equal(compactionHealthIsSafe({...healthy, telemetryOcrBloomViolations: 1}), false);
   assert.equal(compactionHealthIsSafe({...healthy, streamSeparationViolations: 1}), false);
   assert.equal(compactionHealthIsSafe({...healthy, orphanCatalogReferenceCount: 1}), false);
+});
+
+test("OSCAR 4.0+ foundation health enforces PG 19 layout, WGS-84 spatial catalog with zero spatial SQL indexes, zero obs_latest spill, and MQTT gateway hardening", () => {
+  assert.equal(isOsc40PlusRelease("4.0.0"), true);
+  assert.equal(isOsc40PlusRelease("4.0.0-dev.1"), true);
+  assert.equal(isOsc40PlusRelease("3.12.2"), false);
+
+  const healthy = assessFoundation40Health({
+    pgMajorVersion: 19,
+    pgDataDir: "/var/lib/postgresql/19/docker",
+    postgresAnonymousVolumeCount: 0,
+    postgresDataVolumeDestination: "/var/lib/postgresql",
+    postgresTmpfsMaskAbsent: true,
+    postgresShmBytes: 256 * 1024 * 1024,
+    spatialColumnsPresentCount: 7,
+    spatialColumnsNullableCount: 7,
+    spatialSqlIndexCount: 0,
+    obsLatestTempBlksWritten: 0,
+    gatewayKeepaliveCount: 128,
+    gatewayMqttLocationPresent: true,
+    gatewayMqttProxyBufferingOff: true,
+    gatewayMqttWebsocketHeaders: true,
+  });
+  assert.equal(foundation40HealthIsSafe(healthy), true);
+  assert.equal(foundation40HealthIsSafe({...healthy, pgMajorVersion: 16}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, pgDataDir: "/var/lib/postgresql/data"}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, postgresAnonymousVolumeCount: 1}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, postgresTmpfsMaskAbsent: false}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, postgresShmBytes: 64 * 1024 * 1024}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, spatialColumnsPresentCount: 6}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, spatialSqlIndexCount: 1}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, obsLatestTempBlksWritten: 12}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, gatewayKeepaliveCount: 32}), false);
+  assert.equal(foundation40HealthIsSafe({...healthy, gatewayMqttProxyBufferingOff: false}), false);
+
+  assert.equal(sandboxRuntimeLayoutIsSafe40Plus({
+    pgMajorVersion: 19,
+    pgDataDir: "/var/lib/postgresql/19/docker",
+    namedVolumeDestination: "/var/lib/postgresql",
+    anonymousVolumeCount: 0,
+    tmpfsMaskAbsent: true,
+  }), true);
+  assert.equal(sandboxRuntimeLayoutIsSafe40Plus({
+    pgMajorVersion: 19,
+    pgDataDir: "/var/lib/postgresql/19/docker",
+    namedVolumeDestination: "/var/lib/postgresql",
+    anonymousVolumeCount: 1,
+    tmpfsMaskAbsent: true,
+  }), false);
 });

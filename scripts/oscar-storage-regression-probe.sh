@@ -4128,7 +4128,7 @@ EOF
     epoch_created=$(awk -F'"' '/"createdAt"/ {print $4; exit}' "$root/epoch.json")
     valid_uuid "$epoch_id" || fail 'Backup epoch UUID is invalid.'
     [[ $epoch_backup == "$backup" && $epoch_format == oscar-backup-epoch && $epoch_version == 2 &&
-          $epoch_release =~ ^3\.11\.[0-9]+$ && $epoch_state == CREATED &&
+          $epoch_release =~ ^(3\.(11|12)\.[0-9]+|4\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$ && $epoch_state == CREATED &&
           $epoch_created =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] ||
       fail 'Backup epoch identity, format, state, or release is invalid.'
     [[ ! -e $root/wal-archive.tar.gz && ! -L $root/wal-archive.tar.gz ]] ||
@@ -4734,6 +4734,98 @@ SQL
         'streamSeparationViolations', separation.count,
         'orphanCatalogReferenceCount', orphan_refs.count)
       FROM tier_counts, summary_gaps, telemetry_bloom, separation, orphan_refs;"
+    ;;
+
+  foundation-40-health)
+    pg_cid=$(compose ps -q postgres | head -n 1 | tr -d '[:space:]')
+    gw_cid=$(compose ps -q gateway | head -n 1 | tr -d '[:space:]')
+    [[ -n $pg_cid && -n $gw_cid ]] || fail 'Unable to locate running postgres or gateway container.'
+    pg_shm_bytes=$(docker inspect --format '{{.HostConfig.ShmSize}}' "$pg_cid" | tr -d '[:space:]')
+    pg_tmpfs_mask_absent=true
+    while IFS= read -r tmpfs_path; do
+      [[ -n $tmpfs_path ]] || continue
+      if [[ $tmpfs_path == /var/lib/postgresql || $tmpfs_path == /var/lib/postgresql/* ]]; then
+        pg_tmpfs_mask_absent=false
+      fi
+    done < <(docker inspect --format '{{range $k, $v := .HostConfig.Tmpfs}}{{$k}}{{println}}{{end}}' "$pg_cid")
+    pg_anon_vols=0
+    pg_data_dest=''
+    while IFS='|' read -r mtype mname mdest; do
+      [[ $mtype == volume ]] || continue
+      if [[ $mname =~ ^[0-9a-f]{64}$ || -z $mname ]]; then
+        pg_anon_vols=$((pg_anon_vols + 1))
+      elif [[ $mname == *postgres_data ]]; then
+        pg_data_dest=$mdest
+      fi
+    done < <(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}}{{println}}{{end}}' "$pg_cid")
+    safe_json_text "$pg_data_dest"
+
+    gw_conf=$(docker exec "$gw_cid" cat /etc/nginx/conf.d/default.conf)
+    gw_keepalive=$(printf '%s\n' "$gw_conf" | awk '
+      /upstream[[:space:]]+oscar_backend[[:space:]]*\{/ { in_up=1; next }
+      in_up && /\}/ { in_up=0 }
+      in_up && $1 == "keepalive" { gsub(/;/, "", $2); print $2; exit }
+    ' | tr -d '[:space:]')
+    gw_keepalive=${gw_keepalive:-0}
+    mqtt_block=$(printf '%s\n' "$gw_conf" | awk '
+      /location[[:space:]]+\^~[[:space:]]+\/sensorhub\/mqtt[[:space:]]*\{/ { in_m=1 }
+      in_m { print }
+      in_m && /\}/ { in_m=0 }
+    ')
+    gw_mqtt_present=false
+    gw_mqtt_buffering_off=false
+    gw_mqtt_ws_headers=false
+    if [[ -n $mqtt_block ]]; then
+      gw_mqtt_present=true
+      if printf '%s\n' "$mqtt_block" | grep -Eq 'proxy_buffering[[:space:]]+off;' &&
+         printf '%s\n' "$mqtt_block" | grep -Eq 'proxy_request_buffering[[:space:]]+off;'; then
+        gw_mqtt_buffering_off=true
+      fi
+      if printf '%s\n' "$mqtt_block" | grep -Eq 'proxy_set_header[[:space:]]+Upgrade[[:space:]]+' &&
+         printf '%s\n' "$mqtt_block" | grep -Eq 'proxy_set_header[[:space:]]+Connection[[:space:]]+'; then
+        gw_mqtt_ws_headers=true
+      fi
+    fi
+
+    db_json=$(psql_admin --quiet --tuples-only --no-align -f - <<'SQL'
+SELECT json_build_object(
+  'pgMajorVersion', current_setting('server_version_num')::int / 10000,
+  'pgDataDir', current_setting('data_directory'),
+  'spatialColumnsPresentCount', (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'oscar'
+      AND ((table_name = 'oscar_archive_schema' AND column_name IN ('min_lat','max_lat','min_lon','max_lon'))
+        OR (table_name = 'oscar_obs_latest' AND column_name IN ('latest_lat','latest_lon','latest_alt')))
+      AND data_type = 'double precision'
+  ),
+  'spatialColumnsNullableCount', (
+    SELECT count(*) FROM information_schema.columns
+    WHERE table_schema = 'oscar'
+      AND ((table_name = 'oscar_archive_schema' AND column_name IN ('min_lat','max_lat','min_lon','max_lon'))
+        OR (table_name = 'oscar_obs_latest' AND column_name IN ('latest_lat','latest_lon','latest_alt')))
+      AND is_nullable = 'YES'
+  ),
+  'spatialSqlIndexCount', (
+    SELECT count(*) FROM pg_indexes
+    WHERE schemaname = 'oscar'
+      AND tablename IN ('oscar_archive_schema', 'oscar_obs_latest')
+      AND indexdef ~* '\m(min_lat|max_lat|min_lon|max_lon|latest_lat|latest_lon|latest_alt)\M'
+  ),
+  'obsLatestTempBlksWritten', (
+    SELECT coalesce(sum(temp_blks_written), 0)::bigint
+    FROM pg_stat_statements
+    WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+      AND query ILIKE '%oscar_obs_latest%'
+  )
+);
+SQL
+    )
+    db_json=${db_json%$'\r'}
+    db_inner=${db_json#\{}
+    db_inner=${db_inner%\}}
+    printf '{%s,"postgresAnonymousVolumeCount":%s,"postgresDataVolumeDestination":"%s","postgresTmpfsMaskAbsent":%s,"postgresShmBytes":%s,"gatewayKeepaliveCount":%s,"gatewayMqttLocationPresent":%s,"gatewayMqttProxyBufferingOff":%s,"gatewayMqttWebsocketHeaders":%s}\n' \
+      "$db_inner" "$pg_anon_vols" "$pg_data_dest" "$pg_tmpfs_mask_absent" "${pg_shm_bytes:-0}" \
+      "$gw_keepalive" "$gw_mqtt_present" "$gw_mqtt_buffering_off" "$gw_mqtt_ws_headers"
     ;;
 
   *) fail "Unknown storage probe action: $action" ;;

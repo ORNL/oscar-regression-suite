@@ -331,3 +331,11 @@ export interface SandboxIsolationSnapshot {
   sandboxContainerCount: number;
   sandboxVolumeCount: number;
 }
+
+export interface SandboxRuntimeLayout {
+  pgMajorVersion: number;
+  pgDataDir: string;
+  namedVolumeDestination: string;
+  anonymousVolumeCount: number;
+  tmpfsMaskAbsent: boolean;
+}

@@ -1,7 +1,7 @@
 import {execFile} from "node:child_process";
 import {resolve} from "node:path";
 import {promisify} from "node:util";
-import type {SandboxIsolationSnapshot, SuiteConfig} from "./types.js";
+import type {SandboxIsolationSnapshot, SandboxRuntimeLayout, SuiteConfig} from "./types.js";
 
 const execFileAsync = promisify(execFile);
 const TARGET_PATTERN = /^(?:[A-Za-z0-9_.-]+@)?(?:[A-Za-z0-9_.-]+|\[[0-9A-Fa-f:]+\])$/;
@@ -643,5 +643,33 @@ export class StorageProbeClient {
       maxBuffer: 1024 * 1024,
       encoding: "utf8",
     });
+  }
+
+  async sandboxRuntimeLayout(): Promise<SandboxRuntimeLayout> {
+    await this.verifyTargetBinding();
+    const script = [
+      "set -eu",
+      "cid=$(docker ps -q --filter label=com.docker.compose.project=oscar-sandbox --filter label=com.docker.compose.service=postgres | head -n 1)",
+      "test -n \"$cid\"",
+      "pg_major=$(docker exec \"$cid\" sh -eu -c 'PGPASSWORD=$(cat /run/secrets/postgres_bootstrap_password) exec psql -tAq -U oscar_bootstrap -d gis -c \"SELECT current_setting('\''server_version_num'\'')::int / 10000;\"' </dev/null | tr -d '[:space:]')",
+      "pg_data=$(docker exec \"$cid\" sh -eu -c 'PGPASSWORD=$(cat /run/secrets/postgres_bootstrap_password) exec psql -tAq -U oscar_bootstrap -d gis -c \"SHOW data_directory;\"' </dev/null | tr -d '[:space:]')",
+      "tmpfs_ok=true",
+      "while IFS= read -r tp; do [ -n \"$tp\" ] || continue; case \"$tp\" in /var/lib/postgresql|/var/lib/postgresql/*) tmpfs_ok=false ;; esac; done <<EOF\n$(docker inspect --format '{{range $k,$v := .HostConfig.Tmpfs}}{{$k}}{{println}}{{end}}' \"$cid\")\nEOF",
+      "anon_cnt=0",
+      "vol_dest=''",
+      "while IFS='|' read -r mtype mname mdest; do [ \"$mtype\" = volume ] || continue; if printf '%s' \"$mname\" | grep -Eq '^[0-9a-f]{64}$' || [ -z \"$mname\" ]; then anon_cnt=$((anon_cnt + 1)); elif [ \"$mdest\" = /var/lib/postgresql ] || printf '%s' \"$mname\" | grep -Eq 'sandbox_pg$'; then vol_dest=\"$mdest\"; fi; done <<EOF\n$(docker inspect --format '{{range .Mounts}}{{.Type}}|{{.Name}}|{{.Destination}}{{println}}{{end}}' \"$cid\")\nEOF",
+      "printf '{\"pgMajorVersion\":%s,\"pgDataDir\":\"%s\",\"namedVolumeDestination\":\"%s\",\"anonymousVolumeCount\":%s,\"tmpfsMaskAbsent\":%s}\\n' \"${pg_major:-0}\" \"$pg_data\" \"$vol_dest\" \"$anon_cnt\" \"$tmpfs_ok\"",
+    ].join("\n");
+    const command = ["sudo", "-n", "bash", "-ceu", script, "oscar-sandbox-layout"]
+      .map(shellQuote)
+      .join(" ");
+    const {stdout} = await execFileAsync("ssh", [...this.commonOptions(), this.target, command], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      encoding: "utf8",
+    });
+    const line = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+    if (!line) throw new Error("sandboxRuntimeLayout returned empty output");
+    return JSON.parse(line) as SandboxRuntimeLayout;
   }
 }

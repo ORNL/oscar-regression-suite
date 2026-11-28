@@ -1556,6 +1556,84 @@ export function compactionHealthIsSafe(probe: CompactionHealthProbe): boolean {
     probe.orphanCatalogReferenceCount === 0;
 }
 
+export function isOsc40PlusRelease(release: string): boolean {
+  return /^4\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(release.trim());
+}
+
+export interface Foundation40HealthProbe {
+  pgMajorVersion: number;
+  pgDataDir: string;
+  postgresAnonymousVolumeCount: number;
+  postgresDataVolumeDestination: string;
+  postgresTmpfsMaskAbsent: boolean;
+  postgresShmBytes: number;
+  spatialColumnsPresentCount: number;
+  spatialColumnsNullableCount: number;
+  spatialSqlIndexCount: number;
+  obsLatestTempBlksWritten: number;
+  gatewayKeepaliveCount: number;
+  gatewayMqttLocationPresent: boolean;
+  gatewayMqttProxyBufferingOff: boolean;
+  gatewayMqttWebsocketHeaders: boolean;
+}
+
+export function assessFoundation40Health(value: unknown): Foundation40HealthProbe {
+  const probe = object(value, "foundation 4.0 health probe");
+  const bool = (v: unknown, field: string): boolean => {
+    if (typeof v !== "boolean") throw new Error(`${field} must be a boolean`);
+    return v;
+  };
+  return {
+    pgMajorVersion: integer(probe.pgMajorVersion, "pgMajorVersion"),
+    pgDataDir: text(probe.pgDataDir, "pgDataDir"),
+    postgresAnonymousVolumeCount: integer(probe.postgresAnonymousVolumeCount, "postgresAnonymousVolumeCount"),
+    postgresDataVolumeDestination: typeof probe.postgresDataVolumeDestination === "string"
+      ? probe.postgresDataVolumeDestination
+      : "",
+    postgresTmpfsMaskAbsent: bool(probe.postgresTmpfsMaskAbsent, "postgresTmpfsMaskAbsent"),
+    postgresShmBytes: integer(probe.postgresShmBytes, "postgresShmBytes"),
+    spatialColumnsPresentCount: integer(probe.spatialColumnsPresentCount, "spatialColumnsPresentCount"),
+    spatialColumnsNullableCount: integer(probe.spatialColumnsNullableCount, "spatialColumnsNullableCount"),
+    spatialSqlIndexCount: integer(probe.spatialSqlIndexCount, "spatialSqlIndexCount"),
+    obsLatestTempBlksWritten: integer(probe.obsLatestTempBlksWritten, "obsLatestTempBlksWritten"),
+    gatewayKeepaliveCount: integer(probe.gatewayKeepaliveCount, "gatewayKeepaliveCount"),
+    gatewayMqttLocationPresent: bool(probe.gatewayMqttLocationPresent, "gatewayMqttLocationPresent"),
+    gatewayMqttProxyBufferingOff: bool(probe.gatewayMqttProxyBufferingOff, "gatewayMqttProxyBufferingOff"),
+    gatewayMqttWebsocketHeaders: bool(probe.gatewayMqttWebsocketHeaders, "gatewayMqttWebsocketHeaders"),
+  };
+}
+
+export function foundation40HealthIsSafe(probe: Foundation40HealthProbe): boolean {
+  return probe.pgMajorVersion >= 19 &&
+    probe.pgDataDir === `/var/lib/postgresql/${probe.pgMajorVersion}/docker` &&
+    probe.postgresAnonymousVolumeCount === 0 &&
+    probe.postgresDataVolumeDestination === "/var/lib/postgresql" &&
+    probe.postgresTmpfsMaskAbsent === true &&
+    probe.postgresShmBytes >= 256 * 1024 * 1024 &&
+    probe.spatialColumnsPresentCount === 7 &&
+    probe.spatialColumnsNullableCount === 7 &&
+    probe.spatialSqlIndexCount === 0 &&
+    probe.obsLatestTempBlksWritten === 0 &&
+    probe.gatewayKeepaliveCount >= 128 &&
+    probe.gatewayMqttLocationPresent === true &&
+    probe.gatewayMqttProxyBufferingOff === true &&
+    probe.gatewayMqttWebsocketHeaders === true;
+}
+
+export function sandboxRuntimeLayoutIsSafe40Plus(layout: {
+  pgMajorVersion: number;
+  pgDataDir: string;
+  namedVolumeDestination: string;
+  anonymousVolumeCount: number;
+  tmpfsMaskAbsent: boolean;
+}): boolean {
+  return layout.pgMajorVersion >= 19 &&
+    layout.pgDataDir === `/var/lib/postgresql/${layout.pgMajorVersion}/docker` &&
+    layout.namedVolumeDestination === "/var/lib/postgresql" &&
+    layout.anonymousVolumeCount === 0 &&
+    layout.tmpfsMaskAbsent === true;
+}
+
 export function assessArchiveHealth(value: unknown): ArchiveHealthProbe {
   const probe = object(value, "archive health probe");
   return {

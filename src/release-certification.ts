@@ -98,7 +98,7 @@ export function validateRestoreEvidenceBundle(
     throw new Error("Restore evidence must be an unfiltered restore-drill profile");
   }
   if (typeof environment.storageExpectedRelease !== "string" ||
-      !/^(?:3\.(?:11|12)|4\.\d+)\.\d+$/.test(environment.storageExpectedRelease) ||
+      !/^(?:3\.(?:11|12)\.\d+|4\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)$/.test(environment.storageExpectedRelease) ||
       environment.storageWorkflow !== "required" ||
       environment.storageBackupWorkflow !== "required" ||
       environment.storageBackupMode !== "single") {

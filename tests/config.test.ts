@@ -645,27 +645,29 @@ test("configuration supports STORAGE_EXPECTED_RELEASE=3.12.0 and enforces 26-str
     });
   }
 
-  withEnvironment({...baseEnvironment, STORAGE_EXPECTED_RELEASE: "4.0.0"}, () => {
-    const cfg = loadConfig(["--profile", "smoke"]);
-    assert.equal(cfg.storageExpectedRelease, "4.0.0");
-    assert.equal(expectedParquetPrimaryOutputNames(cfg.storageExpectedRelease).length, 26);
-    assert.equal(
-      parquetPrimaryOutputNamesMatchRelease(
-        PARQUET_PRIMARY_OUTPUT_NAMES_3_12,
-        cfg.storageExpectedRelease,
-        PARQUET_PRIMARY_OUTPUT_NAMES_3_12,
-      ),
-      true,
-    );
-    assert.equal(
-      parquetPrimaryOutputNamesMatchRelease(
-        PARQUET_PRIMARY_OUTPUT_NAMES_3_11,
-        cfg.storageExpectedRelease,
-        PARQUET_PRIMARY_OUTPUT_NAMES_3_11,
-      ),
-      false,
-    );
-  });
+  for (const rel of ["4.0.0-dev.1", "4.0.0"] as const) {
+    withEnvironment({...baseEnvironment, STORAGE_EXPECTED_RELEASE: rel}, () => {
+      const cfg = loadConfig(["--profile", "smoke"]);
+      assert.equal(cfg.storageExpectedRelease, rel);
+      assert.equal(expectedParquetPrimaryOutputNames(cfg.storageExpectedRelease).length, 26);
+      assert.equal(
+        parquetPrimaryOutputNamesMatchRelease(
+          PARQUET_PRIMARY_OUTPUT_NAMES_3_12,
+          cfg.storageExpectedRelease,
+          PARQUET_PRIMARY_OUTPUT_NAMES_3_12,
+        ),
+        true,
+      );
+      assert.equal(
+        parquetPrimaryOutputNamesMatchRelease(
+          PARQUET_PRIMARY_OUTPUT_NAMES_3_11,
+          cfg.storageExpectedRelease,
+          PARQUET_PRIMARY_OUTPUT_NAMES_3_11,
+        ),
+        false,
+      );
+    });
+  }
 });
 
 test("configuration validates FEDERATION_WORKFLOW, peer URL constraints, credential fallback, and secret redaction", () => {

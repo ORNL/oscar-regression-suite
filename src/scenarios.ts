@@ -319,7 +319,7 @@ export const PARQUET_PRIMARY_OUTPUT_NAMES_3_12 = [
 const PARQUET_PRIMARY_OUTPUT_NAMES = PARQUET_PRIMARY_OUTPUT_NAMES_3_12;
 
 function isReleaseAtLeast312(release: StorageExpectedRelease): boolean {
-  return release.startsWith("3.12.") || /^4\.\d+\.\d+$/.test(release);
+  return release.startsWith("3.12.") || /^4\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release);
 }
 
 export function expectedParquetPrimaryOutputNames(

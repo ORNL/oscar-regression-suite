@@ -1465,7 +1465,7 @@ export function storagePlatformHasExactReleaseIdentity(
     (value.archiveMarker.version === release ||
       (/^3\.11\.\d+$/.test(release) && /^3\.11\.\d+$/.test(value.archiveMarker.version)) ||
       (/^3\.12\.\d+$/.test(release) && /^3\.(?:11|12)\.\d+$/.test(value.archiveMarker.version)) ||
-      (/^4\.\d+\.\d+$/.test(release) && /^4\.\d+\.\d+$/.test(value.archiveMarker.version))) &&
+      (/^4\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release) && /^4\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.archiveMarker.version))) &&
     value.archiveMarker.dataChecksums === "on" &&
     Number.isFinite(Date.parse(value.archiveMarker.initializedAt)) &&
     value.schemaVersion === OSCAR_STORAGE_SCHEMA_VERSION &&

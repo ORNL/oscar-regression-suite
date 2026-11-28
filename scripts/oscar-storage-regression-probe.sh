@@ -2130,7 +2130,7 @@ case $action in
             ( $marker_version == "$expected_release" ||
               ( $expected_release =~ ^3\.11\.[0-9]+$ && $marker_version =~ ^3\.11\.[0-9]+$ ) ||
               ( $expected_release =~ ^3\.12\.[0-9]+$ && $marker_version =~ ^3\.(11|12)\.[0-9]+$ ) ||
-              ( $expected_release =~ ^4\.[0-9]+\.[0-9]+$ && $marker_version =~ ^4\.[0-9]+\.[0-9]+$ ) ) &&
+              ( $expected_release =~ ^4\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ && $marker_version =~ ^4\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ) ) &&
             $marker_checksums == on &&
             $marker_initialized =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
         marker_exact=true

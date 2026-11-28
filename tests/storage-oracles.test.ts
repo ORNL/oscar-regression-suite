@@ -444,6 +444,10 @@ test("platform/metric contracts preserve PostgreSQL, archive, and batch counters
     "4.0.0",
   ), true, "clean 4.0.0 deployment must pass exact identity validation");
   assert.equal(storagePlatformHasExactReleaseIdentity(
+    {...clean400, archiveMarker: {...platform.archiveMarker, version: "4.0.0-dev.1", exact: true}},
+    "4.0.0",
+  ), true, "4.0.0 in-place upgrade from 4.0.0-dev.1 must pass exact identity validation");
+  assert.equal(storagePlatformHasExactReleaseIdentity(
     {...clean400, archiveMarker: {...platform.archiveMarker, version: "3.12.2", exact: true}},
     "4.0.0",
   ), false, "pre-4.0 archive marker must be rejected on 4.0.0 clean-break foundation");
